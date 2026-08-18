@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+tokenizer/trained*/
+data/shards/*.bin
+data/shards/*.json
+checkpoints/
+*.pt
+*.pth

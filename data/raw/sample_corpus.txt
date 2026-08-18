@@ -1,0 +1,20 @@
+The quick brown fox jumps over the lazy dog.
+Machine learning models learn patterns from data.
+Transformers use self-attention to process sequences.
+The transformer architecture revolutionized natural language processing.
+A tokenizer converts text into tokens that a model can understand.
+Byte pair encoding merges frequent character pairs iteratively.
+Attention mechanisms allow models to focus on relevant parts of input.
+Neural networks are trained using gradient descent and backpropagation.
+Language models predict the next token given previous tokens.
+Deep learning has transformed the field of artificial intelligence.
+The cat sat on the mat while the dog barked outside.
+Python is a popular programming language for machine learning.
+PyTorch provides automatic differentiation for building neural networks.
+Training a model requires data, compute, and careful hyperparameter tuning.
+Tamil is a Dravidian language spoken widely in Tamil Nadu.
+தமிழ் ஒரு பழமையான மொழி.
+வணக்கம், எப்படி இருக்கிறீர்கள்?
+Multi-head attention allows the model to attend to different representation subspaces.
+Positional encoding gives the model information about token order.
+Layer normalization stabilizes training by normalizing activations.
