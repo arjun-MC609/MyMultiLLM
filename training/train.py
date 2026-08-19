@@ -20,7 +20,9 @@ from training.lr_schedule import get_lr
 from training.utils import get_device, set_seed
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
+)
 
 
 def cycle(loader: DataLoader) -> Iterator:
@@ -44,7 +46,14 @@ def evaluate(model, val_loader_iter, device, eval_iters, vocab_size):
     return sum(losses) / len(losses)
 
 
-def save_checkpoint(model, optimizer, step, model_config, checkpoint_dir, filename="checkpoint_latest.pt"):
+def save_checkpoint(
+    model,
+    optimizer,
+    step,
+    model_config,
+    checkpoint_dir,
+    filename="checkpoint_latest.pt",
+):
     """Save a training checkpoint atomically, including RNG state for exact resume."""
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     final_path = Path(checkpoint_dir) / filename
@@ -59,7 +68,9 @@ def save_checkpoint(model, optimizer, step, model_config, checkpoint_dir, filena
             "python": random.getstate(),
             "numpy": np.random.get_state(),
             "torch": torch.get_rng_state(),
-            "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            "torch_cuda": torch.cuda.get_rng_state_all()
+            if torch.cuda.is_available()
+            else None,
         },
     }
 
@@ -74,24 +85,41 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, device=None):
     if not os.path.isfile(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    map_location = device if device is not None else "cpu"
-    checkpoint = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    # Always load to CPU first, regardless of target device. torch.set_rng_state
+    # requires a CPU ByteTensor specifically -- if we map_location the whole
+    # checkpoint onto a GPU, the saved RNG state tensor gets relocated to GPU
+    # too and set_rng_state() raises a TypeError. Model/optimizer weights are
+    # moved to the target device explicitly below instead.
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
     model.load_state_dict(checkpoint["model_state_dict"])
+    if device is not None:
+        model.to(device)
 
     if optimizer is not None and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if device is not None:
+            # optimizer.load_state_dict restores tensors on CPU (since we
+            # loaded the checkpoint to CPU); move any per-parameter state
+            # (e.g. Adam's momentum buffers) onto the target device too, or
+            # the next optimizer.step() will hit a device-mismatch error.
+            for state in optimizer.state.values():
+                for key, value in state.items():
+                    if isinstance(value, torch.Tensor):
+                        state[key] = value.to(device)
 
     rng_state = checkpoint.get("rng_state")
     if rng_state is not None:
         random.setstate(rng_state["python"])
         np.random.set_state(rng_state["numpy"])
-        torch.set_rng_state(rng_state["torch"])
+        torch.set_rng_state(rng_state["torch"])  # always a CPU ByteTensor now
         if rng_state.get("torch_cuda") is not None and torch.cuda.is_available():
             torch.cuda.set_rng_state_all(rng_state["torch_cuda"])
 
     step = checkpoint.get("step", 0)
-    logger.info("Loaded checkpoint from %s (resuming at step %d)", checkpoint_path, step)
+    logger.info(
+        "Loaded checkpoint from %s (resuming at step %d)", checkpoint_path, step
+    )
     return step
 
 
@@ -100,8 +128,12 @@ def train(model_config: ModelConfig, train_config: TrainConfig) -> nn.Module:
     device = get_device()
 
     logger.info("Loading datasets...")
-    train_ds = ShardedTokenDataset(train_config.train_manifest, seq_len=train_config.seq_len)
-    val_ds = ShardedTokenDataset(train_config.val_manifest, seq_len=train_config.seq_len)
+    train_ds = ShardedTokenDataset(
+        train_config.train_manifest, seq_len=train_config.seq_len
+    )
+    val_ds = ShardedTokenDataset(
+        train_config.val_manifest, seq_len=train_config.seq_len
+    )
 
     train_loader = DataLoader(train_ds, batch_size=train_config.batch_size)
     val_loader = DataLoader(val_ds, batch_size=train_config.batch_size)
@@ -114,7 +146,9 @@ def train(model_config: ModelConfig, train_config: TrainConfig) -> nn.Module:
     logger.info("Model has %s parameters", f"{model.num_parameters():,}")
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=train_config.learning_rate, weight_decay=train_config.weight_decay,
+        model.parameters(),
+        lr=train_config.learning_rate,
+        weight_decay=train_config.weight_decay,
     )
     loss_fn = nn.CrossEntropyLoss()
 
@@ -130,8 +164,11 @@ def train(model_config: ModelConfig, train_config: TrainConfig) -> nn.Module:
         logger.info("No existing checkpoint found — starting fresh from step 0.")
 
     if start_step >= train_config.max_steps:
-        logger.info("Checkpoint step %d already >= max_steps %d — nothing to do.",
-                     start_step, train_config.max_steps)
+        logger.info(
+            "Checkpoint step %d already >= max_steps %d — nothing to do.",
+            start_step,
+            train_config.max_steps,
+        )
         return model
 
     model.train()
@@ -158,21 +195,43 @@ def train(model_config: ModelConfig, train_config: TrainConfig) -> nn.Module:
 
         if step % train_config.log_interval == 0:
             elapsed = time.time() - t_start
-            logger.info("step %d/%d | loss %.4f | lr %.2e | elapsed %.1fs",
-                        step, train_config.max_steps, loss.item(), lr, elapsed)
+            logger.info(
+                "step %d/%d | loss %.4f | lr %.2e | elapsed %.1fs",
+                step,
+                train_config.max_steps,
+                loss.item(),
+                lr,
+                elapsed,
+            )
 
         if step > 0 and step % train_config.eval_interval == 0:
-            val_loss = evaluate(model, val_iter, device, train_config.eval_iters, model_config.vocab_size)
+            val_loss = evaluate(
+                model,
+                val_iter,
+                device,
+                train_config.eval_iters,
+                model_config.vocab_size,
+            )
             logger.info("step %d | VALIDATION loss %.4f", step, val_loss)
 
         if step > 0 and step % train_config.checkpoint_interval == 0:
-            save_checkpoint(model, optimizer, step, model_config, train_config.checkpoint_dir)
+            save_checkpoint(
+                model, optimizer, step, model_config, train_config.checkpoint_dir
+            )
 
-    final_val_loss = evaluate(model, val_iter, device, train_config.eval_iters, model_config.vocab_size)
+    final_val_loss = evaluate(
+        model, val_iter, device, train_config.eval_iters, model_config.vocab_size
+    )
     logger.info("Training complete. Final validation loss: %.4f", final_val_loss)
 
-    save_checkpoint(model, optimizer, train_config.max_steps, model_config,
-                     train_config.checkpoint_dir, filename="checkpoint_final.pt")
+    save_checkpoint(
+        model,
+        optimizer,
+        train_config.max_steps,
+        model_config,
+        train_config.checkpoint_dir,
+        filename="checkpoint_final.pt",
+    )
 
     return model
 
@@ -191,18 +250,30 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
-    parser.add_argument("--train-manifest", type=str, default="data/shards/train_shards.json")
-    parser.add_argument("--val-manifest", type=str, default="data/shards/val_shards.json")
+    parser.add_argument(
+        "--train-manifest", type=str, default="data/shards/train_shards.json"
+    )
+    parser.add_argument(
+        "--val-manifest", type=str, default="data/shards/val_shards.json"
+    )
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     args = parser.parse_args()
 
     m_cfg = ModelConfig(
-        vocab_size=args.vocab_size, d_model=args.d_model, n_layers=args.n_layers,
-        n_heads=args.n_heads, d_ff=args.d_ff, max_seq_len=args.max_seq_len,
+        vocab_size=args.vocab_size,
+        d_model=args.d_model,
+        n_layers=args.n_layers,
+        n_heads=args.n_heads,
+        d_ff=args.d_ff,
+        max_seq_len=args.max_seq_len,
     )
     t_cfg = TrainConfig(
-        train_manifest=args.train_manifest, val_manifest=args.val_manifest,
-        seq_len=args.seq_len, batch_size=args.batch_size, max_steps=args.max_steps,
-        learning_rate=args.learning_rate, checkpoint_dir=args.checkpoint_dir,
+        train_manifest=args.train_manifest,
+        val_manifest=args.val_manifest,
+        seq_len=args.seq_len,
+        batch_size=args.batch_size,
+        max_steps=args.max_steps,
+        learning_rate=args.learning_rate,
+        checkpoint_dir=args.checkpoint_dir,
     )
     train(m_cfg, t_cfg)
