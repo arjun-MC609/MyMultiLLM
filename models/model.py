@@ -22,6 +22,7 @@ class TinyTransformerLM(nn.Module):
         self.lm_head.weight = self.embeddings.token_emb.weight
 
         self.apply(self._init_weights)
+        self.last_aux_loss: torch.Tensor = torch.tensor(0.0)
 
     def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
@@ -33,8 +34,14 @@ class TinyTransformerLM(nn.Module):
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         x = self.embeddings(token_ids)
+
+        total_aux_loss = torch.tensor(0.0, device=token_ids.device)
         for block in self.blocks:
             x = block(x)
+            if self.config.use_moe:
+                total_aux_loss = total_aux_loss + block.ffn.last_aux_loss
+        self.last_aux_loss = total_aux_loss
+
         x = self.ln_f(x)
         logits = self.lm_head(x)
         return logits
