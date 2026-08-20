@@ -65,12 +65,19 @@ def run_colab_training(
     batch_size: int = 16,
     max_steps: int = 5000,
     learning_rate: float = 3e-4,
+    use_moe: bool = False,
+    num_experts: int = 4,
+    moe_top_k: int = 2,
+    moe_aux_loss_weight: float = 0.01,
+    checkpoint_subdir: str = "colab_run",
 ) -> None:
     sys.path.insert(0, "/content/MyMultiLLM")
 
     print_gpu_info()
     mount_drive_if_in_colab()
     paths = setup_colab_paths(project_root_in_drive)
+    paths["checkpoint_dir"] = os.path.join(project_root_in_drive, "checkpoints", checkpoint_subdir)
+    logger.info("checkpoint_dir -> %s", paths["checkpoint_dir"])
 
     from models.config import ModelConfig
     from training.config import TrainConfig
@@ -79,6 +86,8 @@ def run_colab_training(
     model_config = ModelConfig(
         vocab_size=vocab_size, d_model=d_model, n_layers=n_layers,
         n_heads=n_heads, d_ff=d_ff, max_seq_len=max_seq_len,
+        use_moe=use_moe, num_experts=num_experts, moe_top_k=moe_top_k,
+        moe_aux_loss_weight=moe_aux_loss_weight,
     )
     train_config = TrainConfig(
         train_manifest=paths["train_manifest"],
