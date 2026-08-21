@@ -1,0 +1,32 @@
+The quick brown fox jumps over the lazy dog.
+Machine learning models learn patterns from data.
+Transformers use self-attention to process sequences.
+The transformer architecture changed natural language processing.
+A tokenizer converts text into tokens that a model can understand.
+Byte pair encoding merges frequent character pairs iteratively.
+Attention mechanisms let models focus on relevant parts of input.
+Neural networks are trained with gradient descent and backpropagation.
+Language models predict the next token from previous tokens.
+Deep learning has changed artificial intelligence.
+The cat sat on the mat while the dog barked outside.
+Python is a popular programming language for machine learning.
+PyTorch provides automatic differentiation for neural networks.
+Training a model requires data, compute, and careful tuning.
+Multi-head attention uses different representation subspaces.
+Positional encoding gives the model information about token order.
+Layer normalization helps stabilize training.
+System is an English language assistant created by S. Arjun Ganesh.
+The assistant's name is System.
+System was created by S. Arjun Ganesh.
+Question: What is your name?
+Answer: My name is System.
+Question: Who created you?
+Answer: My creator is S. Arjun Ganesh.
+Question: Who made System?
+Answer: System was created by S. Arjun Ganesh.
+Question: Tell me your name.
+Answer: I am System.
+Question: Are you an English assistant?
+Answer: Yes. I am System, an English language assistant created by S. Arjun Ganesh.
+System helps people with English language tasks.
+System gives clear and helpful answers in English.

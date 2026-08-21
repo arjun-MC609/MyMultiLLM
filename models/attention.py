@@ -22,8 +22,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
 
-        causal_mask = torch.tril(torch.ones(config.max_seq_len, config.max_seq_len))
-        self.register_buffer("causal_mask", causal_mask.bool())
+        self.use_flash_attention = config.use_flash_attention
 
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False):
         batch_size, new_seq_len, d_model = x.shape
@@ -45,18 +44,27 @@ class MultiHeadSelfAttention(nn.Module):
         present_kv = (k, v) if use_cache else None
         total_len = past_len + new_seq_len
 
-        scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.d_head)
-
-        query_positions = torch.arange(past_len, total_len, device=x.device).unsqueeze(1)
-        key_positions = torch.arange(0, total_len, device=x.device).unsqueeze(0)
-        mask = key_positions <= query_positions
-
-        scores = scores.masked_fill(~mask, float("-inf"))
-
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-
-        out = attn_weights @ v
+        if self.use_flash_attention and hasattr(F, "scaled_dot_product_attention"):
+            # PyTorch selects Flash Attention / memory-efficient kernels on supported CUDA GPUs.
+            # Cached decoding needs an explicit mask because queries start after past keys.
+            if past_len == 0:
+                out = F.scaled_dot_product_attention(
+                    q, k, v, dropout_p=self.dropout.p if self.training else 0.0, is_causal=True,
+                )
+            else:
+                query_positions = torch.arange(past_len, total_len, device=x.device).unsqueeze(1)
+                key_positions = torch.arange(total_len, device=x.device).unsqueeze(0)
+                mask = key_positions <= query_positions
+                out = F.scaled_dot_product_attention(
+                    q, k, v, attn_mask=mask, dropout_p=self.dropout.p if self.training else 0.0,
+                )
+        else:
+            scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.d_head)
+            query_positions = torch.arange(past_len, total_len, device=x.device).unsqueeze(1)
+            key_positions = torch.arange(total_len, device=x.device).unsqueeze(0)
+            mask = key_positions <= query_positions
+            scores = scores.masked_fill(~mask, float("-inf"))
+            out = self.dropout(F.softmax(scores, dim=-1)) @ v
 
         out = out.transpose(1, 2).contiguous().view(batch_size, new_seq_len, d_model)
         out = self.out_proj(out)

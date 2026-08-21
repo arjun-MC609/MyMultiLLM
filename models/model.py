@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 
 from models.config import ModelConfig
 from models.embeddings import Embeddings
@@ -49,7 +50,10 @@ class TinyTransformerLM(nn.Module):
                 x, present_kv = block(x, past_kv=past_kv, use_cache=True)
                 present_kv_list.append(present_kv)
             else:
-                x = block(x, past_kv=past_kv, use_cache=False)
+                if self.config.gradient_checkpointing and self.training:
+                    x = checkpoint(block, x, use_reentrant=False)
+                else:
+                    x = block(x, past_kv=past_kv, use_cache=False)
 
             if self.config.use_moe:
                 total_aux_loss = total_aux_loss + block.ffn.last_aux_loss

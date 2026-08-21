@@ -11,6 +11,17 @@ from tokenizer.train_tokenizer import load_tokenizer
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.WARNING)
 
+SYSTEM_IDENTITY = "I am System, an English language assistant created by S. Arjun Ganesh."
+
+
+def _identity_response(text: str):
+    normalized = text.lower().strip()
+    if "your name" in normalized or "who are you" in normalized:
+        return SYSTEM_IDENTITY
+    if "who created you" in normalized or "who made you" in normalized:
+        return "My creator is S. Arjun Ganesh."
+    return None
+
 
 def _print_banner(mode_desc):
     print("=" * 60)
@@ -35,6 +46,11 @@ def chat_with_model(model, tokenizer, device, label="model"):
             print("Exiting.")
             break
         if not user_input:
+            continue
+
+        identity_response = _identity_response(user_input)
+        if identity_response:
+            print(f"{label}: {identity_response}\n")
             continue
 
         prompt_ids = tokenizer.encode(user_input).ids
@@ -71,6 +87,11 @@ def chat_with_router(registry_path, device):
             print("Exiting.")
             break
         if not user_input:
+            continue
+
+        identity_response = _identity_response(user_input)
+        if identity_response:
+            print(f"[System]: {identity_response}\n")
             continue
 
         specialist_name = router.route(user_input)

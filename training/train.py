@@ -40,6 +40,18 @@ def cycle(loader: DataLoader) -> Iterator:
             yield batch
 
 
+def _resolve_precision(config: TrainConfig, device: torch.device):
+    if config.precision == "fp32":
+        return None
+    if config.precision == "fp16":
+        if device.type != "cuda":
+            raise ValueError("fp16 training requires CUDA")
+        return torch.float16
+    if config.precision == "bf16":
+        return torch.bfloat16
+    return torch.bfloat16 if device.type == "cuda" else None
+
+
 @torch.no_grad()
 def evaluate(model, val_loader_iter, device, eval_iters, vocab_size):
     model.eval()
@@ -139,6 +151,10 @@ def train(model_config: ModelConfig, train_config: TrainConfig) -> nn.Module:
         model.parameters(), lr=train_config.learning_rate, weight_decay=train_config.weight_decay,
     )
     loss_fn = nn.CrossEntropyLoss()
+    amp_dtype = _resolve_precision(train_config, device)
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_dtype == torch.float16)
+    if amp_dtype is not None:
+        logger.info("Mixed precision enabled: %s", amp_dtype)
 
     start_step = 0
     latest_ckpt = Path(train_config.checkpoint_dir) / "checkpoint_latest.pt"
@@ -161,22 +177,27 @@ def train(model_config: ModelConfig, train_config: TrainConfig) -> nn.Module:
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
 
-        input_ids, target_ids = next(train_iter)
-        input_ids, target_ids = input_ids.to(device), target_ids.to(device)
-
-        logits = model(input_ids)
-        loss = loss_fn(logits.view(-1, model_config.vocab_size), target_ids.view(-1))
-
-        if model_config.use_moe:
-            loss = loss + model_config.moe_aux_loss_weight * model.last_aux_loss
-
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        total_loss = 0.0
+        for _ in range(train_config.gradient_accumulation_steps):
+            input_ids, target_ids = next(train_iter)
+            input_ids, target_ids = input_ids.to(device), target_ids.to(device)
+            autocast = torch.autocast(device_type=device.type, dtype=amp_dtype) if amp_dtype else torch.autocast(device_type=device.type, enabled=False)
+            with autocast:
+                logits = model(input_ids)
+                loss = loss_fn(logits.view(-1, model_config.vocab_size), target_ids.view(-1))
+                if model_config.use_moe:
+                    loss = loss + model_config.moe_aux_loss_weight * model.last_aux_loss
+                loss = loss / train_config.gradient_accumulation_steps
+            scaler.scale(loss).backward()
+            total_loss += loss.detach().item()
 
         if train_config.grad_clip > 0:
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_config.grad_clip)
 
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
 
         if step % train_config.log_interval == 0:
             elapsed = time.time() - t_start
@@ -190,7 +211,7 @@ def train(model_config: ModelConfig, train_config: TrainConfig) -> nn.Module:
             logger.info(
                 "step %d/%d (%.1f%%) | epoch %.2f | loss %.4f | lr %.2e | "
                 "%.2f steps/s | elapsed %s | ETA %s",
-                step, train_config.max_steps, pct, epoch, loss.item(), lr,
+                step, train_config.max_steps, pct, epoch, total_loss, lr,
                 steps_per_sec, _format_duration(elapsed),
                 _format_duration(eta_seconds) if eta_seconds != float("inf") else "unknown",
             )
