@@ -1,4 +1,4 @@
-"""Autoregressive text generation from a trained TinyTransformerLM."""
+"""Autoregressive text generation from a trained TinyTransformerLM, with KV-caching."""
 
 import logging
 from typing import List, Optional
@@ -52,6 +52,17 @@ def _apply_top_p(logits: torch.Tensor, p: float) -> torch.Tensor:
     return out
 
 
+def _sample(next_token_logits, temperature, top_k, top_p, greedy) -> int:
+    if greedy:
+        return int(torch.argmax(next_token_logits).item())
+
+    scaled_logits = next_token_logits / max(temperature, 1e-6)
+    scaled_logits = _apply_top_k(scaled_logits, top_k)
+    scaled_logits = _apply_top_p(scaled_logits, top_p)
+    probs = F.softmax(scaled_logits, dim=-1)
+    return int(torch.multinomial(probs, num_samples=1).item())
+
+
 @torch.no_grad()
 def generate(
     model: TinyTransformerLM,
@@ -63,6 +74,7 @@ def generate(
     top_p: float = 1.0,
     greedy: bool = False,
     device: Optional[torch.device] = None,
+    use_cache: bool = True,
 ) -> List[int]:
     if not prompt_ids:
         raise ValueError("prompt_ids must not be empty.")
@@ -73,25 +85,34 @@ def generate(
     max_seq_len = model.config.max_seq_len
     generated = list(prompt_ids)
 
+    if not use_cache:
+        for _ in range(max_new_tokens):
+            context = generated[-max_seq_len:]
+            input_ids = torch.tensor([context], dtype=torch.long, device=device)
+            logits = model(input_ids)
+            next_token_logits = logits[0, -1, :]
+            next_token = _sample(next_token_logits, temperature, top_k, top_p, greedy)
+            generated.append(next_token)
+            if eos_id is not None and next_token == eos_id:
+                break
+        return generated
+
+    prompt_tensor = torch.tensor([generated[-max_seq_len:]], dtype=torch.long, device=device)
+    logits, kv_cache = model(prompt_tensor, use_cache=True)
+    next_token_logits = logits[0, -1, :]
+
     for _ in range(max_new_tokens):
-        context = generated[-max_seq_len:]
-        input_ids = torch.tensor([context], dtype=torch.long, device=device)
-
-        logits = model(input_ids)
-        next_token_logits = logits[0, -1, :]
-
-        if greedy:
-            next_token = int(torch.argmax(next_token_logits).item())
-        else:
-            scaled_logits = next_token_logits / max(temperature, 1e-6)
-            scaled_logits = _apply_top_k(scaled_logits, top_k)
-            scaled_logits = _apply_top_p(scaled_logits, top_p)
-            probs = F.softmax(scaled_logits, dim=-1)
-            next_token = int(torch.multinomial(probs, num_samples=1).item())
-
+        next_token = _sample(next_token_logits, temperature, top_k, top_p, greedy)
         generated.append(next_token)
 
         if eos_id is not None and next_token == eos_id:
             break
+
+        if len(generated) - 1 >= max_seq_len:
+            break
+
+        next_input = torch.tensor([[next_token]], dtype=torch.long, device=device)
+        logits, kv_cache = model(next_input, past_kv_list=kv_cache, use_cache=True)
+        next_token_logits = logits[0, -1, :]
 
     return generated

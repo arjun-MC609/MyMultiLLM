@@ -18,7 +18,17 @@ class TransformerBlock(nn.Module):
         self.use_moe = config.use_moe
         self.ffn = MoEFeedForward(config) if config.use_moe else FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.attn(self.ln1(x))
+    def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False):
+        normed = self.ln1(x)
+        if use_cache:
+            attn_out, present_kv = self.attn(normed, past_kv=past_kv, use_cache=True)
+        else:
+            attn_out = self.attn(normed, past_kv=past_kv, use_cache=False)
+            present_kv = None
+
+        x = x + attn_out
         x = x + self.ffn(self.ln2(x))
+
+        if use_cache:
+            return x, present_kv
         return x
